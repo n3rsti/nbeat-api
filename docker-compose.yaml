@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:14
+    container_name: nbeat_data
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: nbeat
+      POSTGRES_USER: rootuser
+      POSTGRES_PASSWORD: rootpassword
+    volumes:
+      - my_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  my_db_data:
