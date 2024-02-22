@@ -1,17 +1,29 @@
 version: '3.8'
+
 services:
-  postgres:
-    image: postgres:14
-    container_name: nbeat_data
-    ports:
-      - "5432:5432"
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
     environment:
-      POSTGRES_DB: nbeat
-      POSTGRES_USER: rootuser
-      POSTGRES_PASSWORD: rootpassword
+      MONGO_INITDB_ROOT_USERNAME: rootuser
+      MONGO_INITDB_ROOT_PASSWORD: rootpass
+    ports:
+      - "27017:27017"
     volumes:
-      - my_db_data:/var/lib/postgresql/data
-    restart: unless-stopped
+      - mongodb_data:/data/db
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: rootuser
+      ME_CONFIG_MONGODB_ADMINPASSWORD: rootpass
+      ME_CONFIG_MONGODB_SERVER: mongodb
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
 
 volumes:
-  my_db_data:
+  mongodb_data:
+
