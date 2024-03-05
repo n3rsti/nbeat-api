@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
+	"nbeat-api/helper"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -18,9 +18,9 @@ func Connect() *mongo.Client {
 		log.Fatal("Error loading .env file")
 	}
 
-	DbHost := os.Getenv("DB_HOST")
-	DbPassword := os.Getenv("DB_PASSWORD")
-	DbUser := os.Getenv("DB_USER")
+	DbHost := helper.GetEnv("DB_HOST", "")
+	DbPassword := helper.GetEnv("DB_PASSWORD", "")
+	DbUser := helper.GetEnv("DB_USER", "")
 
 	fmt.Println(DbHost, DbUser, DbPassword)
 	uri := fmt.Sprintf("mongodb://%s:%s@%s", DbUser, DbPassword, DbHost)

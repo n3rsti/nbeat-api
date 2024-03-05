@@ -1,12 +1,17 @@
 package channel
 
 import (
+	"context"
 	"log"
+	"nbeat-api/helper"
+	"nbeat-api/models"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 var (
@@ -17,7 +22,9 @@ var (
 	}{conns: make(map[string][]*websocket.Conn)}
 )
 
-type Handler struct{}
+type Handler struct {
+	Db *mongo.Database
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -26,11 +33,9 @@ var upgrader = websocket.Upgrader{
 func AddConnection(conn *websocket.Conn, channelId string) {
 	clientRegistry.m.Lock()
 	if _, exists := clientRegistry.conns[channelId]; exists {
-		log.Println("Alr exists")
 		clientRegistry.conns[channelId] = append(clientRegistry.conns[channelId], conn)
 	} else {
 		clientRegistry.conns[channelId] = []*websocket.Conn{conn}
-		log.Println("Added")
 	}
 	clientRegistry.m.Unlock()
 }
@@ -71,13 +76,20 @@ func (h *Handler) Channel(c *gin.Context) {
 			log.Println("Error during message reading:", err)
 			break
 		}
-		log.Printf("Received: %s", message)
+		log.Printf("Received: %s, %d", message, messageType)
 
-		broadcastMessage(messageType, message, channelId)
-		log.Println(clientRegistry.conns)
+		h.handleMessage(messageType, message, channelId)
 	}
 }
 
+func (h *Handler) handleMessage(messageType int, message []byte, channelId string) {
+	if songId := helper.MatchSongUrl(string(message)); songId != "" {
+		log.Printf("Sond ID: %s", songId)
+		h.PlaySong(songId, channelId)
+	}
+
+	broadcastMessage(messageType, message, channelId)
+}
 func broadcastMessage(messageType int, message []byte, channelId string) {
 	clientRegistry.m.Lock()
 	defer clientRegistry.m.Unlock()
@@ -86,4 +98,22 @@ func broadcastMessage(messageType int, message []byte, channelId string) {
 			log.Println("Error during message broadcasting:", err)
 		}
 	}
+}
+
+func (h *Handler) PlaySong(song string, channel string) {
+	collection := h.Db.Collection("channel")
+	updatedChannel := models.Channel{
+		LastSong:         song,
+		LastSongPLayedAt: time.Now().UnixMilli(),
+		Id:               channel,
+	}
+
+	// TO FIX
+	res, err := collection.UpdateOne(context.Background(), channel, updatedChannel.ToBsonOmitEmpty())
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Printf("Updated channel: %s, count: %d", channel, res.ModifiedCount)
 }

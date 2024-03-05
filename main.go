@@ -23,7 +23,7 @@ func main() {
 	db := mongoClient.Database("nbeat")
 
 	userHandler := user.Handler{Db: db}
-	channelHandler := channel.Handler{}
+	channelHandler := channel.Handler{Db: db}
 
 	router.POST("/api/login", userHandler.Login)
 	router.POST("/api/register", userHandler.Register)
