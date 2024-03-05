@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -117,18 +119,57 @@ func broadcastMessage(messageType int, message []byte, channelId string) {
 
 func (h *Handler) PlaySong(song string, channel string) {
 	collection := h.Db.Collection("channel")
-	updatedChannel := models.Channel{
-		LastSong:         song,
-		LastSongPLayedAt: time.Now().UnixMilli(),
-		Id:               channel,
+
+	updateFormula := bson.D{
+		{Key: "$set", Value: bson.D{
+			{Key: "last_song", Value: song},
+			{Key: "last_song_played_at", Value: time.Now().UnixMilli()},
+		}}}
+
+	channelObjectId, err := primitive.ObjectIDFromHex(channel)
+	if err != nil {
+		return
 	}
 
-	// TO FIX
-	res, err := collection.UpdateOne(context.Background(), channel, updatedChannel.ToBsonOmitEmpty())
+	res, err := collection.UpdateByID(context.Background(), channelObjectId, updateFormula)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
 	log.Printf("Updated channel: %s, count: %d", channel, res.ModifiedCount)
+}
+
+func (h *Handler) CreateChannel(c *gin.Context) {
+	var channel models.Channel
+
+	if err := c.BindJSON(&channel); err != nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	userId := auth.ExtractClaimsFromContext(c).Id
+
+	collection := h.Db.Collection("channel")
+
+	channelBson := bson.D{
+		{Key: "name", Value: channel.Name},
+		{Key: "owner", Value: userId},
+	}
+
+	res, err := collection.InsertOne(context.TODO(), channelBson)
+	if err != nil {
+		log.Println(err)
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	channel.Id = res.InsertedID.(primitive.ObjectID).Hex()
+	channel.Owner = userId
+	channel.Messages = []models.Message{}
+	channel.LastSong = ""
+	channel.LastSongPLayedAt = 0
+
+	c.JSON(http.StatusCreated, channel)
+
 }

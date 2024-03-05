@@ -8,6 +8,7 @@ type Channel struct {
 	LastSong         string    `json:"last_song,omitempty"`
 	LastSongPLayedAt int64     `json:"last_song_played_at,omitempty"`
 	Messages         []Message `json:"messages,omitempty"`
+	Owner            string    `json:"owner,omitempty"`
 }
 
 type Message struct {
@@ -38,6 +39,10 @@ func (c *Channel) ToBsonOmitEmpty() bson.D {
 
 	if len(c.Messages) != 0 {
 		data = append(data, bson.E{Key: "messages", Value: c.Messages})
+	}
+
+	if c.Owner != "" {
+		data = append(data, bson.E{Key: "owner", Value: c.Owner})
 	}
 
 	return data

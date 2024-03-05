@@ -5,6 +5,7 @@ import (
 	"nbeat-api/helper"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 )
 
@@ -55,4 +56,11 @@ func ExtractClaims(signedToken string) *SignedClaims {
 	}
 
 	return claims
+}
+
+func ExtractClaimsFromContext(c *gin.Context) *SignedClaims {
+	token := c.GetHeader("Authorization")
+	token = token[len("Bearer "):]
+
+	return ExtractClaims(token)
 }
