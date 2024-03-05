@@ -5,6 +5,7 @@ import (
 	"nbeat-api/db"
 	"nbeat-api/handlers/channel"
 	"nbeat-api/handlers/user"
+	"nbeat-api/middleware/cors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +25,8 @@ func main() {
 
 	userHandler := user.Handler{Db: db}
 	channelHandler := channel.Handler{Db: db}
+
+	router.Use(cors.Middleware())
 
 	router.POST("/api/login", userHandler.Login)
 	router.POST("/api/register", userHandler.Register)

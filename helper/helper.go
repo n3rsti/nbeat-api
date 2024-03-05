@@ -29,3 +29,15 @@ func GetEnv(name, fallback string) string {
 
 	return fallback
 }
+
+func MatchBearerToken(authHeader string) string {
+	pattern := `^Bearer\s+([a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)$`
+	re := regexp.MustCompile(pattern)
+
+	matches := re.FindStringSubmatch(authHeader)
+	if len(matches) == 2 {
+		return matches[1]
+	}
+
+	return ""
+}

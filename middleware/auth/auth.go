@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"log"
 	"nbeat-api/helper"
 	"time"
 
@@ -33,4 +34,25 @@ func GenerateAccessToken(userId string) (accessToken string, err error) {
 	}
 
 	return newToken, nil
+}
+
+func ExtractClaims(signedToken string) *SignedClaims {
+	token, err := jwt.ParseWithClaims(
+		signedToken,
+		&SignedClaims{},
+		func(token *jwt.Token) (interface{}, error) {
+			return []byte(SecretKey), nil
+		},
+	)
+	if err != nil {
+		log.Panic(err)
+		return nil
+	}
+
+	claims, ok := token.Claims.(*SignedClaims)
+	if !ok {
+		return nil
+	}
+
+	return claims
 }

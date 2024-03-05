@@ -2,8 +2,10 @@ package channel
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"nbeat-api/helper"
+	"nbeat-api/middleware/auth"
 	"nbeat-api/models"
 	"net/http"
 	"sync"
@@ -70,6 +72,8 @@ func (h *Handler) Channel(c *gin.Context) {
 
 	defer RemoveConnection(conn, channelId)
 
+	userId := ""
+
 	for {
 		messageType, message, err := conn.ReadMessage()
 		if err != nil {
@@ -78,18 +82,29 @@ func (h *Handler) Channel(c *gin.Context) {
 		}
 		log.Printf("Received: %s, %d", message, messageType)
 
-		h.handleMessage(messageType, message, channelId)
+		h.handleMessage(messageType, message, channelId, &userId)
 	}
 }
 
-func (h *Handler) handleMessage(messageType int, message []byte, channelId string) {
+func (h *Handler) handleMessage(messageType int, message []byte, channelId string, userId *string) {
+	if authToken := helper.MatchBearerToken(string(message)); authToken != "" {
+		claims := auth.ExtractClaims(authToken)
+		*userId = claims.Id
+		return
+	}
+
+	if *userId == "" {
+		return
+	}
+
 	if songId := helper.MatchSongUrl(string(message)); songId != "" {
 		log.Printf("Sond ID: %s", songId)
 		h.PlaySong(songId, channelId)
 	}
 
-	broadcastMessage(messageType, message, channelId)
+	broadcastMessage(messageType, []byte(fmt.Sprintf("%s: %s", *userId, message)), channelId)
 }
+
 func broadcastMessage(messageType int, message []byte, channelId string) {
 	clientRegistry.m.Lock()
 	defer clientRegistry.m.Unlock()
