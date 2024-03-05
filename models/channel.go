@@ -5,9 +5,9 @@ import "go.mongodb.org/mongo-driver/bson"
 type Channel struct {
 	Id               string    `json:"_id" bson:"_id"`
 	Name             string    `json:"name,omitempty"`
-	LastSong         string    `json:"last_song,omitempty"`
-	LastSongPLayedAt int64     `json:"last_song_played_at,omitempty"`
-	Messages         []Message `json:"messages,omitempty"`
+	LastSong         string    `json:"last_song,omitempty" bson:"last_song"`
+	LastSongPLayedAt int64     `json:"last_song_played_at,omitempty" bson:"last_song_played_at"`
+	Messages         []Message `json:"messages,omitempty" bson:"messages"`
 	Owner            string    `json:"owner,omitempty"`
 }
 

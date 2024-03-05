@@ -173,3 +173,28 @@ func (h *Handler) CreateChannel(c *gin.Context) {
 	c.JSON(http.StatusCreated, channel)
 
 }
+
+func (h *Handler) GetChannel(c *gin.Context) {
+	paramId := c.Param("id")
+	channelId, err := primitive.ObjectIDFromHex(paramId)
+
+	if err != nil {
+		log.Println(err)
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	collection := h.Db.Collection("channel")
+
+	var channelObject models.Channel
+
+	filter := bson.D{{Key: "_id", Value: channelId}}
+	if err := collection.FindOne(c, filter).Decode(&channelObject); err != nil {
+		log.Println(err)
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	c.JSON(http.StatusOK, channelObject)
+
+}
