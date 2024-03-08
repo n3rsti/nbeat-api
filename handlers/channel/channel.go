@@ -2,7 +2,7 @@ package channel
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"log"
 	"nbeat-api/helper"
 	"nbeat-api/middleware/auth"
@@ -104,7 +104,17 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 		h.PlaySong(songId, channelId)
 	}
 
-	broadcastMessage(messageType, []byte(fmt.Sprintf("%s: %s", *userId, message)), channelId)
+	messageObject := models.Message{
+		Author:  *userId,
+		Content: string(message),
+	}
+
+	jsonString, err := json.Marshal(messageObject)
+	if err != nil {
+		return
+	}
+
+	broadcastMessage(messageType, []byte(jsonString), channelId)
 }
 
 func broadcastMessage(messageType int, message []byte, channelId string) {

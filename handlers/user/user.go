@@ -99,4 +99,6 @@ func (h *Handler) Register(c *gin.Context) {
 		})
 		return
 	}
+
+	c.Status(http.StatusCreated)
 }
