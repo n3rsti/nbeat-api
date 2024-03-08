@@ -3,6 +3,9 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"nbeat-api/helper"
 	"nbeat-api/middleware/auth"
@@ -99,14 +102,29 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 		return
 	}
 
-	if songId := helper.MatchSongUrl(string(message)); songId != "" {
-		log.Printf("Sond ID: %s", songId)
-		h.PlaySong(songId, channelId)
-	}
-
 	messageObject := models.Message{
 		Author:  *userId,
 		Content: string(message),
+		Type:    "message",
+	}
+
+	if songId := helper.MatchSongUrl(string(message)); songId != "" {
+		log.Printf("Sond ID: %s", songId)
+		h.PlaySong(songId, channelId)
+
+		data, err := getSongData(songId)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		messageObject.Type = "song"
+		songData, err := json.Marshal(data)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		messageObject.Content = string(songData)
 	}
 
 	jsonString, err := json.Marshal(messageObject)
@@ -207,4 +225,60 @@ func (h *Handler) GetChannel(c *gin.Context) {
 
 	c.JSON(http.StatusOK, channelObject)
 
+}
+
+type YoutubeVideoData struct {
+	Items []struct {
+		Id             string `json:"id"`
+		ContentDetails struct {
+			Duration string `json:"duration"`
+		} `json:"contentDetails"`
+		Snippet struct {
+			Title      string `json:"title"`
+			Thumbnails struct {
+				Default struct {
+					Url string `json:"url"`
+				} `json:"default"`
+			} `json:"thumbnails"`
+		} `json:"snippet"`
+	} `json:"items"`
+}
+
+func getSongData(url string) (YoutubeVideoData, error) {
+
+	var data YoutubeVideoData
+	apiKey := helper.GetEnv("YOUTUBE_API_KEY", "")
+	if apiKey == "" {
+		return data, errors.New("no API key")
+	}
+
+	requestUrl := fmt.Sprintf("https://www.googleapis.com/youtube/v3/videos?id=%s&key=%s&part=snippet,contentDetails", url, apiKey)
+	res, err := http.Get(requestUrl)
+	if err != nil {
+		log.Println(err)
+		return data, err
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Println(err)
+	}
+
+	json.Unmarshal(body, &data)
+
+	return data, nil
+
+}
+
+func (h *Handler) GetSongData(c *gin.Context) {
+	id := c.Param("id")
+
+	videoData, err := getSongData(id)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+	}
+
+	log.Println(videoData)
+
+	c.JSON(http.StatusOK, videoData)
 }

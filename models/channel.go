@@ -15,6 +15,7 @@ type Message struct {
 	Author  string `json:"author"`
 	Content string `json:"content"`
 	Id      string `json:"_id,omitempty"`
+	Type    string `json:"type,omitempty"`
 }
 
 func (c *Channel) ToBsonOmitEmpty() bson.D {
