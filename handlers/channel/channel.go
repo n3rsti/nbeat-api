@@ -87,52 +87,81 @@ func (h *Handler) Channel(c *gin.Context) {
 		}
 		log.Printf("Received: %s, %d", message, messageType)
 
-		h.handleMessage(messageType, message, channelId, &userId)
+		if err := h.handleMessage(messageType, message, channelId, &userId); err != nil {
+			log.Println(err)
+		}
+
 	}
 }
 
-func (h *Handler) handleMessage(messageType int, message []byte, channelId string, userId *string) {
+func (h *Handler) handleMessage(messageType int, message []byte, channelId string, userId *string) error {
 	if authToken := helper.MatchBearerToken(string(message)); authToken != "" {
 		claims := auth.ExtractClaims(authToken)
 		*userId = claims.Id
-		return
+		return nil
 	}
 
 	if *userId == "" {
-		return
+		return errors.New("user not authorized")
 	}
 
 	messageObject := models.Message{
 		Author:  *userId,
 		Content: string(message),
 		Type:    "message",
+		Id:      primitive.NewObjectID(),
 	}
 
 	if songId := helper.MatchSongUrl(string(message)); songId != "" {
-		log.Printf("Sond ID: %s", songId)
 		h.PlaySong(songId, channelId)
 
 		data, err := getSongData(songId)
 		if err != nil {
-			log.Println(err)
-			return
+			return err
 		}
 
 		messageObject.Type = "song"
 		songData, err := json.Marshal(data)
 		if err != nil {
-			log.Println(err)
-			return
+			return err
 		}
 		messageObject.Content = string(songData)
 	}
 
 	jsonString, err := json.Marshal(messageObject)
 	if err != nil {
-		return
+		return err
 	}
 
 	broadcastMessage(messageType, []byte(jsonString), channelId)
+	if err := h.saveMessage(messageObject, channelId); err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func (h *Handler) saveMessage(message models.Message, channelId string) error {
+	collection := h.Db.Collection("channel")
+
+	channelObjectId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		return err
+	}
+
+	filter := bson.M{"_id": channelObjectId}
+	update := bson.M{"$push": bson.M{"messages": message}}
+
+	res, err := collection.UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("%d documents updated", res.ModifiedCount)
+	log.Println(message, channelId)
+	return nil
+
 }
 
 func broadcastMessage(messageType int, message []byte, channelId string) {

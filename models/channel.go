@@ -1,6 +1,9 @@
 package models
 
-import "go.mongodb.org/mongo-driver/bson"
+import (
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
 
 type Channel struct {
 	Id               string    `json:"_id" bson:"_id"`
@@ -12,10 +15,10 @@ type Channel struct {
 }
 
 type Message struct {
-	Author  string `json:"author"`
-	Content string `json:"content"`
-	Id      string `json:"_id,omitempty"`
-	Type    string `json:"type,omitempty"`
+	Author  string             `json:"author"`
+	Content string             `json:"content"`
+	Id      primitive.ObjectID `json:"_id,omitempty"`
+	Type    string             `json:"type,omitempty"`
 }
 
 func (c *Channel) ToBsonOmitEmpty() bson.D {
