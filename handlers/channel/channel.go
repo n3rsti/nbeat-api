@@ -113,10 +113,19 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 	}
 
 	if songId := helper.MatchSongUrl(string(message)); songId != "" {
-		h.PlaySong(songId, channelId)
 
 		data, err := getSongData(songId)
 		if err != nil {
+			return err
+		}
+
+		song, err := models.BuildSongFromYoutubeData(data)
+
+		if err != nil {
+			return err
+		}
+
+		if err := h.PlaySong(song, channelId); err != nil {
 			return err
 		}
 
@@ -153,13 +162,11 @@ func (h *Handler) saveMessage(message models.Message, channelId string) error {
 	filter := bson.M{"_id": channelObjectId}
 	update := bson.M{"$push": bson.M{"messages": message}}
 
-	res, err := collection.UpdateOne(context.Background(), filter, update)
+	_, err = collection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("%d documents updated", res.ModifiedCount)
-	log.Println(message, channelId)
 	return nil
 
 }
@@ -174,27 +181,90 @@ func broadcastMessage(messageType int, message []byte, channelId string) {
 	}
 }
 
-func (h *Handler) PlaySong(song string, channel string) {
+func (h *Handler) PlaySong(song models.Song, channelId string) error {
 	collection := h.Db.Collection("channel")
 
 	updateFormula := bson.D{
 		{Key: "$set", Value: bson.D{
-			{Key: "last_song", Value: song},
+			{Key: "last_song", Value: song.SongId},
 			{Key: "last_song_played_at", Value: time.Now().UnixMilli()},
 		}}}
 
-	channelObjectId, err := primitive.ObjectIDFromHex(channel)
+	channelObjectId, err := primitive.ObjectIDFromHex(channelId)
 	if err != nil {
-		return
+		return err
 	}
 
 	res, err := collection.UpdateByID(context.Background(), channelObjectId, updateFormula)
 	if err != nil {
 		log.Println(err)
-		return
+		return err
 	}
 
-	log.Printf("Updated channel: %s, count: %d", channel, res.ModifiedCount)
+	log.Printf("Updated channel: %s, count: %d", channelId, res.ModifiedCount)
+
+	// Add to queue
+
+	var queue models.Queue
+
+	collection = h.Db.Collection("queue")
+
+	filter := bson.M{"channel_id": channelId}
+
+	err = collection.FindOne(context.Background(), filter).Decode(&queue)
+
+	if queue.ChannelId == "" {
+		queue, err = h.insertNewQueue(channelId)
+		if err != nil || queue.Id.Hex() == "" {
+			return fmt.Errorf("couldn't insert queue (id: %s), error: %s", queue.Id, err)
+		}
+	}
+
+	song.Id = primitive.NewObjectID()
+
+	if len(queue.Songs) == 0 {
+		song.SongStartTime = time.Now().UnixMilli()
+		queue.Songs = []models.Song{song}
+	} else {
+		lastSong := queue.Songs[len(queue.Songs)-1]
+
+		if lastSong.SongStartTime+int64(lastSong.Duration*1000) <= time.Now().UnixMilli() {
+			song.SongStartTime = time.Now().UnixMilli()
+		} else {
+			song.SongStartTime = lastSong.SongStartTime + int64(lastSong.Duration*1000)
+		}
+
+		queue.Songs = append(queue.Songs, song)
+	}
+
+	if _, err := collection.ReplaceOne(context.Background(), filter, queue); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (h *Handler) insertNewQueue(channelId string) (models.Queue, error) {
+	collection := h.Db.Collection("queue")
+
+	queue := models.Queue{
+		ChannelId: channelId,
+		Songs:     []models.Song{},
+	}
+
+	res, err := collection.InsertOne(context.Background(), queue)
+	if err != nil {
+		return models.Queue{}, err
+	}
+
+	queue.Id = res.InsertedID.(primitive.ObjectID)
+
+	return queue, nil
+
+}
+
+func (h *Handler) AddSongToQueue() {
+
 }
 
 func (h *Handler) CreateChannel(c *gin.Context) {
@@ -256,26 +326,69 @@ func (h *Handler) GetChannel(c *gin.Context) {
 
 }
 
-type YoutubeVideoData struct {
-	Items []struct {
-		Id             string `json:"id"`
-		ContentDetails struct {
-			Duration string `json:"duration"`
-		} `json:"contentDetails"`
-		Snippet struct {
-			Title      string `json:"title"`
-			Thumbnails struct {
-				Default struct {
-					Url string `json:"url"`
-				} `json:"default"`
-			} `json:"thumbnails"`
-		} `json:"snippet"`
-	} `json:"items"`
+func (h *Handler) GetChannel2(c *gin.Context) {
+	// Extract channel ID from URL parameter
+	channelID := c.Param("id")
+
+	channelCollection := h.Db.Collection("channel")
+	queueCollection := h.Db.Collection("queue")
+
+	channelObjId, _ := primitive.ObjectIDFromHex(channelID)
+
+	// Fetch channel data by ID
+	var channel models.Channel
+	err := channelCollection.FindOne(context.Background(), bson.M{"_id": channelObjId}).Decode(&channel)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
+		return
+	}
+
+	currentTimestamp := time.Now().UnixMilli()
+
+	pipeline := []bson.M{
+		{"$match": bson.M{"channel_id": channelID}},
+		{"$unwind": "$songs"},
+		{"$facet": bson.M{
+			"lastPlayed": []bson.M{
+				{"$match": bson.M{"songs.song_start_time": bson.M{"$lt": currentTimestamp}}},
+				{"$sort": bson.M{"songs.song_start_time": -1}},
+				{"$limit": 1},
+			},
+			"upcomingSongs": []bson.M{
+				{"$match": bson.M{"songs.song_start_time": bson.M{"$gt": currentTimestamp}}},
+				{"$sort": bson.M{"songs.song_start_time": 1}},
+			},
+		}},
+	}
+
+	cursor, err := queueCollection.Aggregate(context.Background(), pipeline)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch songs"})
+		return
+	}
+	defer cursor.Close(context.Background())
+
+	var results []bson.M
+	if err = cursor.All(context.Background(), &results); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode song data"})
+		return
+	}
+
+	response := struct {
+		Channel models.Channel `json:"channel"`
+		Songs   bson.M         `json:"songs"`
+	}{
+		Channel: channel,
+		Songs:   results[0],
+	}
+
+	// Return the channel with attached songs
+	c.JSON(http.StatusOK, response)
 }
 
-func getSongData(url string) (YoutubeVideoData, error) {
+func getSongData(url string) (models.YoutubeVideoData, error) {
 
-	var data YoutubeVideoData
+	var data models.YoutubeVideoData
 	apiKey := helper.GetEnv("YOUTUBE_API_KEY", "")
 	if apiKey == "" {
 		return data, errors.New("no API key")
@@ -306,8 +419,6 @@ func (h *Handler) GetSongData(c *gin.Context) {
 	if err != nil {
 		c.Status(http.StatusNotFound)
 	}
-
-	log.Println(videoData)
 
 	c.JSON(http.StatusOK, videoData)
 }

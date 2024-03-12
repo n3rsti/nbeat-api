@@ -32,6 +32,7 @@ func main() {
 	router.POST("/api/register", userHandler.Register)
 	router.POST("/api/channel", channelHandler.CreateChannel)
 	router.GET("/api/channel/:id", channelHandler.GetChannel)
+	router.GET("/api/channel2/:id", channelHandler.GetChannel2)
 	router.GET("/api/song/:id", channelHandler.GetSongData)
 	router.GET("/ws/channel/:id", channelHandler.Channel)
 
