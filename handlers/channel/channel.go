@@ -105,6 +105,8 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 		return errors.New("user not authorized")
 	}
 
+	var jsonResponse []byte
+
 	messageObject := models.Message{
 		Author:  *userId,
 		Content: string(message),
@@ -121,6 +123,9 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 
 		song, err := models.BuildSongFromYoutubeData(data)
 
+		newSongId := primitive.NewObjectID()
+		song.Id = newSongId
+
 		if err != nil {
 			return err
 		}
@@ -129,20 +134,33 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 			return err
 		}
 
+		response := map[string]interface{}{
+			"author":  *userId,
+			"content": song,
+			"type":    "song",
+			"id":      newSongId,
+		}
+
 		messageObject.Type = "song"
-		songData, err := json.Marshal(data)
+		messageObject.SongRef = newSongId.Hex()
+
+		log.Println(response)
+
+		jsonResponse, err = json.Marshal(response)
 		if err != nil {
 			return err
 		}
-		messageObject.Content = string(songData)
+	} else {
+
+		var err error
+
+		jsonResponse, err = json.Marshal(messageObject)
+		if err != nil {
+			return err
+		}
 	}
 
-	jsonString, err := json.Marshal(messageObject)
-	if err != nil {
-		return err
-	}
-
-	broadcastMessage(messageType, []byte(jsonString), channelId)
+	broadcastMessage(messageType, []byte(jsonResponse), channelId)
 	if err := h.saveMessage(messageObject, channelId); err != nil {
 		return err
 	}
@@ -161,6 +179,8 @@ func (h *Handler) saveMessage(message models.Message, channelId string) error {
 
 	filter := bson.M{"_id": channelObjectId}
 	update := bson.M{"$push": bson.M{"messages": message}}
+
+	log.Println(message)
 
 	_, err = collection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
@@ -182,45 +202,27 @@ func broadcastMessage(messageType int, message []byte, channelId string) {
 }
 
 func (h *Handler) PlaySong(song models.Song, channelId string) error {
-	collection := h.Db.Collection("channel")
-
-	updateFormula := bson.D{
-		{Key: "$set", Value: bson.D{
-			{Key: "last_song", Value: song.SongId},
-			{Key: "last_song_played_at", Value: time.Now().UnixMilli()},
-		}}}
-
-	channelObjectId, err := primitive.ObjectIDFromHex(channelId)
-	if err != nil {
-		return err
-	}
-
-	res, err := collection.UpdateByID(context.Background(), channelObjectId, updateFormula)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	log.Printf("Updated channel: %s, count: %d", channelId, res.ModifiedCount)
-
 	// Add to queue
 
 	var queue models.Queue
 
-	collection = h.Db.Collection("queue")
+	collection := h.Db.Collection("queue")
 
-	filter := bson.M{"channel_id": channelId}
+	channelObjId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		return fmt.Errorf("invalid id: %s", channelId)
+	}
+
+	filter := bson.M{"channel_id": channelObjId}
 
 	err = collection.FindOne(context.Background(), filter).Decode(&queue)
 
-	if queue.ChannelId == "" {
+	if queue.ChannelId == primitive.NilObjectID {
 		queue, err = h.insertNewQueue(channelId)
 		if err != nil || queue.Id.Hex() == "" {
 			return fmt.Errorf("couldn't insert queue (id: %s), error: %s", queue.Id, err)
 		}
 	}
-
-	song.Id = primitive.NewObjectID()
 
 	if len(queue.Songs) == 0 {
 		song.SongStartTime = time.Now().UnixMilli()
@@ -247,8 +249,13 @@ func (h *Handler) PlaySong(song models.Song, channelId string) error {
 func (h *Handler) insertNewQueue(channelId string) (models.Queue, error) {
 	collection := h.Db.Collection("queue")
 
+	channelObjId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		return models.Queue{}, err
+	}
+
 	queue := models.Queue{
-		ChannelId: channelId,
+		ChannelId: channelObjId,
 		Songs:     []models.Song{},
 	}
 
@@ -301,89 +308,148 @@ func (h *Handler) CreateChannel(c *gin.Context) {
 
 }
 
-func (h *Handler) GetChannel(c *gin.Context) {
-	paramId := c.Param("id")
-	channelId, err := primitive.ObjectIDFromHex(paramId)
+func (h *Handler) FetchChannelWithLastPlayedSong(c *gin.Context, channelID string) (bson.M, error) {
+	channelCollection := h.Db.Collection("channel")
 
+	channelObjectId, err := primitive.ObjectIDFromHex(channelID)
+	if err != nil {
+		return nil, err
+	}
+
+	currentTimestamp := time.Now().UnixMilli()
+
+	pipeline := []bson.M{
+		{"$match": bson.M{"_id": channelObjectId}},
+		{"$lookup": bson.M{
+			"from": "queue",
+			"let":  bson.M{"channel_id": "$_id"},
+			"pipeline": []bson.M{
+				{"$match": bson.M{"$expr": bson.M{"$eq": []interface{}{"$channel_id", "$$channel_id"}}}},
+				{"$unwind": "$songs"},
+				{"$match": bson.M{"songs.song_start_time": bson.M{"$lt": currentTimestamp}}},
+				{"$sort": bson.M{"songs.song_start_time": -1}},
+				{"$limit": 1},
+			},
+			"as": "lastPlayedSong",
+		}},
+		{
+			"$unwind": "$messages",
+		},
+		{"$lookup": bson.M{
+			"from": "queue",
+			"let":  bson.M{"song_id": "$messages.song"},
+			"pipeline": []bson.M{
+				{"$unwind": "$songs"},
+				{"$match": bson.M{"$expr": bson.M{"$eq": []interface{}{"$songs.id", "$$song_id"}}}},
+				{"$replaceRoot": bson.M{"newRoot": "$songs"}},
+			},
+			"as": "messages.songDetails",
+		},
+		},
+		{
+			"$group": bson.M{
+				"_id":      "$_id",
+				"name":     bson.M{"$first": "$name"},
+				"owner":    bson.M{"$first": "$owner"},
+				"messages": bson.M{"$push": "$messages"},
+			},
+		},
+		{"$project": bson.M{
+			"messages":       1,
+			"name":           1,
+			"owner":          1,
+			"lastPlayedSong": bson.M{"$arrayElemAt": []interface{}{"$lastPlayedSong.songs", 0}},
+		}},
+	}
+
+	var channels []bson.M
+	cursor, err := channelCollection.Aggregate(c, pipeline)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer cursor.Close(c)
+
+	if err := cursor.All(c, &channels); err != nil {
+		return nil, err
+	}
+	if len(channels) == 0 {
+		return nil, errors.New("channel not found")
+	}
+	return channels[0], nil
+
+}
+
+func (h *Handler) FetchUpcomingSongsForChannel(c *gin.Context, channelID string) (bson.M, error) {
+	channelObjId, err := primitive.ObjectIDFromHex(channelID)
+	if err != nil {
+		return nil, err
+	}
+
+	queueCollection := h.Db.Collection("queue")
+
+	currentTimestamp := time.Now().UnixMilli()
+	pipeline := []bson.M{
+		{"$match": bson.M{"channel_id": channelObjId}},
+		{
+			"$unwind": "$songs",
+		},
+		{
+			"$match": bson.M{"songs.song_start_time": bson.M{"$gt": currentTimestamp}},
+		},
+		{
+			"$group": bson.M{
+				"_id":   "$_id",
+				"songs": bson.M{"$push": "$songs"},
+			},
+		},
+		{"$project": bson.M{
+			"_id": 0,
+		}},
+	}
+
+	cursor, err := queueCollection.Aggregate(context.Background(), pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(context.Background())
+
+	var result []bson.M
+
+	if err := cursor.All(c, &result); err != nil {
+		return nil, err
+	}
+
+	if len(result) == 0 {
+		return bson.M{"songs": []interface{}{}}, nil
+	}
+
+	return result[0], nil
+
+}
+
+func (h *Handler) GetChannel(c *gin.Context) {
+	channelID := c.Param("id")
+
+	channel, err := h.FetchChannelWithLastPlayedSong(c, channelID)
 	if err != nil {
 		log.Println(err)
 		c.Status(http.StatusNotFound)
 		return
 	}
 
-	collection := h.Db.Collection("channel")
-
-	var channelObject models.Channel
-
-	filter := bson.D{{Key: "_id", Value: channelId}}
-	if err := collection.FindOne(c, filter).Decode(&channelObject); err != nil {
+	queue, err := h.FetchUpcomingSongsForChannel(c, channelID)
+	if err != nil {
 		log.Println(err)
-		c.Status(http.StatusBadRequest)
+		c.Status(http.StatusNotFound)
 		return
 	}
 
-	c.JSON(http.StatusOK, channelObject)
-
-}
-
-func (h *Handler) GetChannel2(c *gin.Context) {
-	// Extract channel ID from URL parameter
-	channelID := c.Param("id")
-
-	channelCollection := h.Db.Collection("channel")
-	queueCollection := h.Db.Collection("queue")
-
-	channelObjId, _ := primitive.ObjectIDFromHex(channelID)
-
-	// Fetch channel data by ID
-	var channel models.Channel
-	err := channelCollection.FindOne(context.Background(), bson.M{"_id": channelObjId}).Decode(&channel)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Channel not found"})
-		return
-	}
-
-	currentTimestamp := time.Now().UnixMilli()
-
-	pipeline := []bson.M{
-		{"$match": bson.M{"channel_id": channelID}},
-		{"$unwind": "$songs"},
-		{"$facet": bson.M{
-			"lastPlayed": []bson.M{
-				{"$match": bson.M{"songs.song_start_time": bson.M{"$lt": currentTimestamp}}},
-				{"$sort": bson.M{"songs.song_start_time": -1}},
-				{"$limit": 1},
-			},
-			"upcomingSongs": []bson.M{
-				{"$match": bson.M{"songs.song_start_time": bson.M{"$gt": currentTimestamp}}},
-				{"$sort": bson.M{"songs.song_start_time": 1}},
-			},
-		}},
-	}
-
-	cursor, err := queueCollection.Aggregate(context.Background(), pipeline)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch songs"})
-		return
-	}
-	defer cursor.Close(context.Background())
-
-	var results []bson.M
-	if err = cursor.All(context.Background(), &results); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decode song data"})
-		return
-	}
-
-	response := struct {
-		Channel models.Channel `json:"channel"`
-		Songs   bson.M         `json:"songs"`
-	}{
-		Channel: channel,
-		Songs:   results[0],
-	}
-
-	// Return the channel with attached songs
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusOK, gin.H{
+		"channel": channel,
+		"queue":   queue,
+	})
 }
 
 func getSongData(url string) (models.YoutubeVideoData, error) {

@@ -10,7 +10,7 @@ type Channel struct {
 	Name             string    `json:"name,omitempty"`
 	LastSong         string    `json:"last_song,omitempty" bson:"last_song"`
 	LastSongPLayedAt int64     `json:"last_song_played_at,omitempty" bson:"last_song_played_at"`
-	Messages         []Message `json:"messages,omitempty" bson:"messages"`
+	Messages         []Message `json:"messages" bson:"messages"`
 	Owner            string    `json:"owner,omitempty"`
 }
 
@@ -18,6 +18,7 @@ type Message struct {
 	Author  string             `json:"author"`
 	Content string             `json:"content"`
 	Id      primitive.ObjectID `json:"_id,omitempty"`
+	SongRef string             `json:"song,omitempty" bson:"song"`
 	Type    string             `json:"type,omitempty"`
 }
 

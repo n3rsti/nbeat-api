@@ -8,17 +8,17 @@ import (
 
 type Queue struct {
 	Id        primitive.ObjectID `json:"_id" bson:"_id,omitempty"`
-	ChannelId string             `json:"channel_id" bson:"channel_id"`
+	ChannelId primitive.ObjectID `json:"channel_id" bson:"channel_id"`
 	Songs     []Song
 }
 
 type Song struct {
-	Id            primitive.ObjectID
-	SongId        string `json:"song_id" bson:"song_id"`
-	Duration      float64
-	Title         string
-	Thumbnail     string
-	SongStartTime int64 `json:"song_start_time" bson:"song_start_time"`
+	Id            primitive.ObjectID `json:"id" bson:"id"`
+	SongId        string             `json:"song_id" bson:"song_id"`
+	Duration      float64            `json:"duration" bson:"duration"`
+	Title         string             `json:"title" bson:"title"`
+	Thumbnail     string             `json:"thumbnail" bson:"thumbnail"`
+	SongStartTime int64              `json:"song_start_time" bson:"song_start_time"`
 }
 
 func BuildSongFromYoutubeData(data YoutubeVideoData) (Song, error) {
