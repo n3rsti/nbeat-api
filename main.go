@@ -8,9 +8,13 @@ import (
 	"nbeat-api/middleware/cors"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		panic(err)
+	}
 	router := gin.Default()
 
 	mongoClient := db.Connect()

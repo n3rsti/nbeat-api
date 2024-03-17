@@ -64,8 +64,6 @@ func (h *Handler) Channel(c *gin.Context) {
 
 	channelId := c.Param("id")
 
-	log.Println(channelId)
-
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Print("Error during connection upgradation:", err)
@@ -85,7 +83,6 @@ func (h *Handler) Channel(c *gin.Context) {
 			log.Println("Error during message reading:", err)
 			break
 		}
-		log.Printf("Received: %s, %d", message, messageType)
 
 		if err := h.handleMessage(messageType, message, channelId, &userId); err != nil {
 			log.Println(err)
@@ -96,76 +93,94 @@ func (h *Handler) Channel(c *gin.Context) {
 
 func (h *Handler) handleMessage(messageType int, message []byte, channelId string, userId *string) error {
 	if authToken := helper.MatchBearerToken(string(message)); authToken != "" {
-		claims := auth.ExtractClaims(authToken)
-		*userId = claims.Id
-		return nil
+		return authorizeUser(authToken, userId)
 	}
 
-	if *userId == "" {
+	messageContent, err := h.processMessage(message, channelId, userId)
+	if err != nil {
+		return err
+	}
+
+	return broadcastMessage(messageType, messageContent, channelId)
+}
+
+func authorizeUser(authToken string, userId *string) error {
+	if authToken == "" && *userId == "" {
 		return errors.New("user not authorized")
 	}
 
-	var jsonResponse []byte
+	if authToken != "" {
+		claims, err := auth.ValidateToken(authToken)
+		if err != nil {
+			return err
+		}
+		*userId = claims.Id
+	}
 
-	messageObject := models.Message{
+	return nil
+}
+
+func (h *Handler) processMessage(message []byte, channelId string, userId *string) ([]byte, error) {
+	if songId := helper.MatchSongUrl(string(message)); songId != "" {
+		return h.handleSongMessage(songId, channelId, userId)
+	}
+
+	return h.handleTextMessage(message, userId, channelId)
+}
+
+func (h *Handler) handleSongMessage(songId, channelId string, userId *string) ([]byte, error) {
+	data, err := getSongData(songId)
+	if err != nil {
+		return nil, err
+	}
+
+	songData, err := models.BuildSongFromYoutubeData(data)
+	if err != nil {
+		return nil, err
+	}
+
+	newSongId := primitive.NewObjectID()
+	songData.Id = newSongId
+
+	songData, err = h.PlaySong(songData, channelId)
+	if err != nil {
+		return nil, err
+	}
+
+	response := map[string]interface{}{
+		"author":  *userId,
+		"content": songData,
+		"type":    "song",
+		"id":      newSongId,
+	}
+
+	messageToSave := models.Message{
+		Author:  *userId,
+		Type:    "song",
+		Id:      newSongId,
+		SongRef: newSongId,
+	}
+
+	if err := h.saveMessage(messageToSave, channelId); err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(response)
+}
+
+func (h *Handler) handleTextMessage(message []byte, userId *string, channelId string) ([]byte, error) {
+	messageToSave := models.Message{
 		Author:  *userId,
 		Content: string(message),
 		Type:    "message",
 		Id:      primitive.NewObjectID(),
 	}
 
-	if songId := helper.MatchSongUrl(string(message)); songId != "" {
-
-		data, err := getSongData(songId)
-		if err != nil {
-			return err
-		}
-
-		song, err := models.BuildSongFromYoutubeData(data)
-
-		newSongId := primitive.NewObjectID()
-		song.Id = newSongId
-
-		if err != nil {
-			return err
-		}
-
-		song, err = h.PlaySong(song, channelId)
-		if err != nil {
-			return err
-		}
-
-		response := map[string]interface{}{
-			"author":  *userId,
-			"content": song,
-			"type":    "song",
-			"id":      newSongId,
-		}
-
-		messageObject.Type = "song"
-		messageObject.SongRef = newSongId
-
-		jsonResponse, err = json.Marshal(response)
-		if err != nil {
-			return err
-		}
-	} else {
-
-		var err error
-
-		jsonResponse, err = json.Marshal(messageObject)
-		if err != nil {
-			return err
-		}
+	if err := h.saveMessage(messageToSave, channelId); err != nil {
+		return nil, err
 	}
 
-	broadcastMessage(messageType, []byte(jsonResponse), channelId)
-	if err := h.saveMessage(messageObject, channelId); err != nil {
-		return err
-	}
-
-	return nil
-
+	return json.Marshal(messageToSave)
 }
 
 func (h *Handler) saveMessage(message models.Message, channelId string) error {
@@ -179,8 +194,6 @@ func (h *Handler) saveMessage(message models.Message, channelId string) error {
 	filter := bson.M{"_id": channelObjectId}
 	update := bson.M{"$push": bson.M{"messages": message}}
 
-	log.Println(message)
-
 	_, err = collection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
 		return err
@@ -190,14 +203,16 @@ func (h *Handler) saveMessage(message models.Message, channelId string) error {
 
 }
 
-func broadcastMessage(messageType int, message []byte, channelId string) {
+func broadcastMessage(messageType int, message []byte, channelId string) error {
 	clientRegistry.m.Lock()
 	defer clientRegistry.m.Unlock()
 	for _, conn := range clientRegistry.conns[channelId] {
 		if err := conn.WriteMessage(messageType, message); err != nil {
-			log.Println("Error during message broadcasting:", err)
+			return err
 		}
 	}
+
+	return nil
 }
 
 func (h *Handler) PlaySong(song models.Song, channelId string) (models.Song, error) {

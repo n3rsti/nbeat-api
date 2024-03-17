@@ -1,16 +1,27 @@
 package auth
 
 import (
+	"errors"
 	"log"
 	"nbeat-api/helper"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
+	"github.com/joho/godotenv"
 )
 
+func loadSecretKey() string {
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("can't load .env'")
+	}
+
+	return helper.GetEnv("SECRET_KEY", "secret")
+}
+
 var (
-	SecretKey = helper.GetEnv("SECRET_KEY", "secret")
+	SecretKey = loadSecretKey()
 )
 
 type SignedClaims struct {
@@ -63,4 +74,35 @@ func ExtractClaimsFromContext(c *gin.Context) *SignedClaims {
 	token = token[len("Bearer "):]
 
 	return ExtractClaims(token)
+}
+
+func ValidateToken(signedToken string) (claims *SignedClaims, err error) {
+	token, err := jwt.ParseWithClaims(
+		signedToken,
+		&SignedClaims{},
+		func(token *jwt.Token) (interface{}, error) {
+			return []byte(SecretKey), nil
+		},
+	)
+	if err != nil {
+		return
+	}
+
+	claims, ok := token.Claims.(*SignedClaims)
+	if !ok {
+		err = errors.New("couldn't parse claims")
+		return
+	}
+
+	if claims.ExpiresAt.Unix() < time.Now().Local().Unix() {
+		err = errors.New("token expired")
+		return
+	}
+
+	if claims.Id == "" {
+		err = errors.New("empty id")
+		return
+	}
+
+	return
 }

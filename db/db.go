@@ -7,17 +7,11 @@ import (
 	"nbeat-api/helper"
 	"time"
 
-	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func Connect() *mongo.Client {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
 	DbHost := helper.GetEnv("DB_HOST", "")
 	DbPassword := helper.GetEnv("DB_PASSWORD", "")
 	DbUser := helper.GetEnv("DB_USER", "")
