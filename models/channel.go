@@ -17,8 +17,8 @@ type Channel struct {
 type Message struct {
 	Author  string             `json:"author"`
 	Content string             `json:"content"`
-	Id      primitive.ObjectID `json:"_id,omitempty"`
-	SongRef string             `json:"song,omitempty" bson:"song"`
+	Id      primitive.ObjectID `json:"id,omitempty"`
+	SongRef primitive.ObjectID `json:"song,omitempty" bson:"song"`
 	Type    string             `json:"type,omitempty"`
 }
 

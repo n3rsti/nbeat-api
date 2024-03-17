@@ -130,7 +130,8 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 			return err
 		}
 
-		if err := h.PlaySong(song, channelId); err != nil {
+		song, err = h.PlaySong(song, channelId)
+		if err != nil {
 			return err
 		}
 
@@ -142,9 +143,7 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 		}
 
 		messageObject.Type = "song"
-		messageObject.SongRef = newSongId.Hex()
-
-		log.Println(response)
+		messageObject.SongRef = newSongId
 
 		jsonResponse, err = json.Marshal(response)
 		if err != nil {
@@ -201,7 +200,7 @@ func broadcastMessage(messageType int, message []byte, channelId string) {
 	}
 }
 
-func (h *Handler) PlaySong(song models.Song, channelId string) error {
+func (h *Handler) PlaySong(song models.Song, channelId string) (models.Song, error) {
 	// Add to queue
 
 	var queue models.Queue
@@ -210,7 +209,7 @@ func (h *Handler) PlaySong(song models.Song, channelId string) error {
 
 	channelObjId, err := primitive.ObjectIDFromHex(channelId)
 	if err != nil {
-		return fmt.Errorf("invalid id: %s", channelId)
+		return models.Song{}, fmt.Errorf("invalid id: %s", channelId)
 	}
 
 	filter := bson.M{"channel_id": channelObjId}
@@ -220,7 +219,7 @@ func (h *Handler) PlaySong(song models.Song, channelId string) error {
 	if queue.ChannelId == primitive.NilObjectID {
 		queue, err = h.insertNewQueue(channelId)
 		if err != nil || queue.Id.Hex() == "" {
-			return fmt.Errorf("couldn't insert queue (id: %s), error: %s", queue.Id, err)
+			return models.Song{}, fmt.Errorf("couldn't insert queue (id: %s), error: %s", queue.Id, err)
 		}
 	}
 
@@ -240,10 +239,10 @@ func (h *Handler) PlaySong(song models.Song, channelId string) error {
 	}
 
 	if _, err := collection.ReplaceOne(context.Background(), filter, queue); err != nil {
-		return err
+		return models.Song{}, err
 	}
 
-	return nil
+	return song, nil
 }
 
 func (h *Handler) insertNewQueue(channelId string) (models.Queue, error) {
@@ -332,9 +331,7 @@ func (h *Handler) FetchChannelWithLastPlayedSong(c *gin.Context, channelID strin
 			},
 			"as": "lastPlayedSong",
 		}},
-		{
-			"$unwind": "$messages",
-		},
+		{"$unwind": "$messages"},
 		{"$lookup": bson.M{
 			"from": "queue",
 			"let":  bson.M{"song_id": "$messages.song"},
@@ -346,13 +343,13 @@ func (h *Handler) FetchChannelWithLastPlayedSong(c *gin.Context, channelID strin
 			"as": "messages.songDetails",
 		},
 		},
-		{
-			"$group": bson.M{
-				"_id":      "$_id",
-				"name":     bson.M{"$first": "$name"},
-				"owner":    bson.M{"$first": "$owner"},
-				"messages": bson.M{"$push": "$messages"},
-			},
+		{"$group": bson.M{
+			"_id":            "$_id",
+			"lastPlayedSong": bson.M{"$first": "$lastPlayedSong"},
+			"name":           bson.M{"$first": "$name"},
+			"owner":          bson.M{"$first": "$owner"},
+			"messages":       bson.M{"$push": "$messages"},
+		},
 		},
 		{"$project": bson.M{
 			"messages":       1,
