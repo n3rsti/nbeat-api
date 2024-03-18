@@ -19,6 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var (
@@ -499,4 +500,49 @@ func (h *Handler) GetSongData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, videoData)
+}
+
+func (h *Handler) FollowChannel(c *gin.Context) {
+	channelId := c.Param("id")
+	channelObjId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	claims := auth.ExtractClaimsFromContext(c)
+	userId := claims.Id
+
+	filter := bson.M{"_id": channelObjId}
+
+	opts := options.FindOne().SetProjection(
+		bson.M{
+			"_id":   1,
+			"owner": 1,
+		},
+	)
+
+	collection := h.Db.Collection("channel")
+
+	var channel models.Channel
+	if err := collection.FindOne(c, filter, opts).Decode(&channel); err != nil {
+		log.Println(err)
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	if channel.Owner == userId {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	collection = h.Db.Collection("user")
+
+	update := bson.M{"$addToSet": bson.M{"followed_channels": channelObjId}}
+
+	if _, err := collection.UpdateByID(c, userId, update); err != nil {
+		log.Println(err)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 }
