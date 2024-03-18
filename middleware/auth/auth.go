@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log"
 	"nbeat-api/helper"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -105,4 +107,42 @@ func ValidateToken(signedToken string) (claims *SignedClaims, err error) {
 	}
 
 	return
+}
+
+func Auth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.GetHeader("Authorization")
+
+		if !strings.HasPrefix(token, "Bearer ") {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "no access token",
+			})
+			c.Header("WWW-Authenticate", "invalid access token")
+			c.Abort()
+			return
+		}
+
+		token = token[len("Bearer "):]
+
+		claims, err := ValidateToken(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid access token",
+			})
+			c.Header("WWW-Authenticate", "invalid access token")
+			c.Abort()
+			return
+		}
+
+		if claims.Token == "refresh" {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "provided token is refresh token (should be access token)",
+			})
+			c.Header("WWW-Authenticate", "provided token is refresh token (should be access token)")
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
 }

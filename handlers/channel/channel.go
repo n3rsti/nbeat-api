@@ -324,17 +324,36 @@ func (h *Handler) CreateChannel(c *gin.Context) {
 }
 
 func (h *Handler) FetchChannelWithLastPlayedSong(c *gin.Context, channelID string) (bson.M, error) {
+	channel, err := h.FetchChannelsWithLastPlayedSong(c, channelID)
+	if err != nil {
+		return bson.M{}, err
+	}
+
+	if len(channel) == 0 {
+		return bson.M{}, errors.New("not found")
+	}
+
+	return channel[0], nil
+}
+
+func (h *Handler) FetchChannelsWithLastPlayedSong(c *gin.Context, channelID ...string) ([]bson.M, error) {
 	channelCollection := h.Db.Collection("channel")
 
-	channelObjectId, err := primitive.ObjectIDFromHex(channelID)
-	if err != nil {
-		return nil, err
+	channelObjIdList := make([]primitive.ObjectID, 0, len(channelID))
+	for idx := range channelID {
+
+		channelObjectId, err := primitive.ObjectIDFromHex(channelID[idx])
+		if err != nil {
+			return nil, err
+		}
+
+		channelObjIdList = append(channelObjIdList, channelObjectId)
 	}
 
 	currentTimestamp := time.Now().UnixMilli()
 
 	pipeline := []bson.M{
-		{"$match": bson.M{"_id": channelObjectId}},
+		{"$match": bson.M{"_id": bson.M{"$in": channelObjIdList}}},
 		{"$lookup": bson.M{
 			"from": "queue",
 			"let":  bson.M{"channel_id": "$_id"},
@@ -347,7 +366,7 @@ func (h *Handler) FetchChannelWithLastPlayedSong(c *gin.Context, channelID strin
 			},
 			"as": "lastPlayedSong",
 		}},
-		{"$unwind": "$messages"},
+		{"$unwind": bson.M{"path": "$messages", "preserveNullAndEmptyArrays": true}},
 		{"$lookup": bson.M{
 			"from": "queue",
 			"let":  bson.M{"song_id": "$messages.song"},
@@ -390,7 +409,7 @@ func (h *Handler) FetchChannelWithLastPlayedSong(c *gin.Context, channelID strin
 	if len(channels) == 0 {
 		return nil, errors.New("channel not found")
 	}
-	return channels[0], nil
+	return channels, nil
 
 }
 

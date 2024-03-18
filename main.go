@@ -5,6 +5,7 @@ import (
 	"nbeat-api/db"
 	"nbeat-api/handlers/channel"
 	"nbeat-api/handlers/user"
+	"nbeat-api/middleware/auth"
 	"nbeat-api/middleware/cors"
 
 	"github.com/gin-gonic/gin"
@@ -34,11 +35,18 @@ func main() {
 
 	router.POST("/api/login", userHandler.Login)
 	router.POST("/api/register", userHandler.Register)
-	router.POST("/api/channel", channelHandler.CreateChannel)
 	router.GET("/api/channel/:id", channelHandler.GetChannel)
-	router.POST("/api/channel/:id/subscribe", channelHandler.FollowChannel)
 	router.GET("/api/song/:id", channelHandler.GetSongData)
 	router.GET("/ws/channel/:id", channelHandler.Channel)
+	router.GET("/api/user/:id/followedChannelIds", userHandler.FetchFollowedChannelIDs)
+	router.GET("/api/user/:id/followedChannels", userHandler.FetchFollowedChannelsData)
+
+	authorized := router.Group("/")
+	authorized.Use(auth.Auth())
+	{
+		authorized.POST("/api/channel", channelHandler.CreateChannel)
+		authorized.POST("/api/channel/:id/subscribe", channelHandler.FollowChannel)
+	}
 
 	router.Run("0.0.0.0:8080")
 }
