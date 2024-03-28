@@ -285,8 +285,27 @@ func (h *Handler) insertNewQueue(channelId string) (models.Queue, error) {
 
 }
 
-func (h *Handler) AddSongToQueue() {
+func (h *Handler) AddToFollowedChannels(userId, channelId string) error {
+	channelObjId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		return err
+	}
 
+	collection := h.Db.Collection("user")
+
+	filter := bson.M{"_id": userId}
+	update := bson.M{"$push": bson.M{"followed_channels": channelObjId}}
+
+	res, err := collection.UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return err
+	}
+
+	if res.MatchedCount == 0 {
+		return errors.New("user not found")
+	}
+
+	return nil
 }
 
 func (h *Handler) CreateChannel(c *gin.Context) {
@@ -313,7 +332,12 @@ func (h *Handler) CreateChannel(c *gin.Context) {
 		return
 	}
 
-	channel.Id = res.InsertedID.(primitive.ObjectID).Hex()
+	newChannelId := res.InsertedID.(primitive.ObjectID)
+	if err := h.AddToFollowedChannels(userId, newChannelId.Hex()); err != nil {
+		log.Println(err)
+	}
+
+	channel.Id = newChannelId.Hex()
 	channel.Owner = userId
 	channel.Messages = []models.Message{}
 	channel.LastSong = ""

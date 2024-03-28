@@ -160,7 +160,7 @@ func (h *Handler) FetchFollowedChannelsData(c *gin.Context) {
 			"foreignField": "channel_id",
 			"as":           "queueInfo",
 		}},
-		{"$unwind": "$queueInfo"},
+		{"$unwind": bson.M{"path": "$queueInfo", "preserveNullAndEmptyArrays": true}},
 		{"$set": bson.M{
 			"queueInfo.songs": bson.M{
 				"$filter": bson.M{
