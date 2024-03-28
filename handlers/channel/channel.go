@@ -97,6 +97,10 @@ func (h *Handler) handleMessage(messageType int, message []byte, channelId strin
 		return authorizeUser(authToken, userId)
 	}
 
+	if *userId == "" {
+		return errors.New("user not authorized")
+	}
+
 	messageContent, err := h.processMessage(message, channelId, userId)
 	if err != nil {
 		return err
@@ -312,6 +316,13 @@ func (h *Handler) CreateChannel(c *gin.Context) {
 	var channel models.Channel
 
 	if err := c.BindJSON(&channel); err != nil {
+		log.Println(err)
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	if err := channel.Validate(); err != nil {
+		log.Println(err)
 		c.Status(http.StatusBadRequest)
 		return
 	}
@@ -323,6 +334,7 @@ func (h *Handler) CreateChannel(c *gin.Context) {
 	channelBson := bson.D{
 		{Key: "name", Value: channel.Name},
 		{Key: "owner", Value: userId},
+		{Key: "description", Value: channel.Description},
 	}
 
 	res, err := collection.InsertOne(context.TODO(), channelBson)
@@ -407,6 +419,7 @@ func (h *Handler) FetchChannelsWithLastPlayedSong(c *gin.Context, channelID ...s
 			"lastPlayedSong": bson.M{"$first": "$lastPlayedSong"},
 			"name":           bson.M{"$first": "$name"},
 			"owner":          bson.M{"$first": "$owner"},
+			"description":    bson.M{"$first": "$description"},
 			"messages":       bson.M{"$push": "$messages"},
 		},
 		},
@@ -414,6 +427,7 @@ func (h *Handler) FetchChannelsWithLastPlayedSong(c *gin.Context, channelID ...s
 			"messages":       1,
 			"name":           1,
 			"owner":          1,
+			"description":    1,
 			"lastPlayedSong": bson.M{"$arrayElemAt": []interface{}{"$lastPlayedSong.songs", 0}},
 		}},
 	}

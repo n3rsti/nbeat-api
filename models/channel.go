@@ -8,6 +8,7 @@ import (
 type Channel struct {
 	Id               string    `json:"_id" bson:"_id"`
 	Name             string    `json:"name,omitempty"`
+	Description      string    `json:"description,omitempty" validate:"max=100"`
 	LastSong         string    `json:"last_song,omitempty" bson:"last_song"`
 	LastSongPLayedAt int64     `json:"last_song_played_at,omitempty" bson:"last_song_played_at"`
 	Messages         []Message `json:"messages" bson:"messages"`
@@ -20,6 +21,16 @@ type Message struct {
 	Id      primitive.ObjectID `json:"id,omitempty"`
 	SongRef primitive.ObjectID `json:"song,omitempty" bson:"song"`
 	Type    string             `json:"type,omitempty"`
+}
+
+func (c Channel) Validate() error {
+	err := validate.Struct(c)
+	return err
+}
+
+func (m Message) Validate() error {
+	err := validate.Struct(m)
+	return err
 }
 
 func (c *Channel) ToBsonOmitEmpty() bson.D {
