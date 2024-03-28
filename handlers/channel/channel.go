@@ -603,3 +603,43 @@ func (h *Handler) FollowChannel(c *gin.Context) {
 		return
 	}
 }
+
+func (h *Handler) DeleteChannel(c *gin.Context) {
+	channelId := c.Param("id")
+
+	channelObjId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	claims := auth.ExtractClaimsFromContext(c)
+
+	collection := h.Db.Collection("channel")
+	filter := bson.M{
+		"_id":   channelObjId,
+		"owner": claims.Id,
+	}
+
+	if res, err := collection.DeleteOne(c, filter); err != nil {
+		log.Println(err)
+		c.Status(http.StatusInternalServerError)
+		return
+	} else if res.DeletedCount == 0 {
+		c.Status(http.StatusForbidden)
+		return
+	}
+
+	collection = h.Db.Collection("queue")
+	filter = bson.M{
+		"channel_id": channelObjId,
+	}
+
+	if res, err := collection.DeleteOne(c, filter); err != nil {
+		log.Println(err)
+	} else if res.DeletedCount == 0 {
+		log.Printf("Couldn't delete queue for channel %s\n", channelId)
+	}
+
+	c.Status(http.StatusNoContent)
+}

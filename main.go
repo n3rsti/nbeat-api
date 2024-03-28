@@ -46,6 +46,7 @@ func main() {
 	{
 		authorized.POST("/api/channel", channelHandler.CreateChannel)
 		authorized.POST("/api/channel/:id/subscribe", channelHandler.FollowChannel)
+		authorized.DELETE("/api/channel/:id", channelHandler.DeleteChannel)
 	}
 
 	router.Run("0.0.0.0:8080")
