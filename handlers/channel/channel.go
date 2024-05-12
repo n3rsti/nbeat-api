@@ -11,6 +11,7 @@ import (
 	"nbeat-api/middleware/auth"
 	"nbeat-api/models"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -30,6 +31,12 @@ var (
 	}{conns: make(map[string][]*websocket.Conn)}
 )
 
+const (
+	MessageTypeAuth       = "auth"
+	MessageTypeChangeTime = "time"
+	MessageTypeText       = "text"
+)
+
 type Handler struct {
 	Db *mongo.Database
 }
@@ -45,6 +52,7 @@ func AddConnection(conn *websocket.Conn, channelId string) {
 	} else {
 		clientRegistry.conns[channelId] = []*websocket.Conn{conn}
 	}
+
 	clientRegistry.m.Unlock()
 }
 
@@ -92,21 +100,69 @@ func (h *Handler) Channel(c *gin.Context) {
 	}
 }
 
-func (h *Handler) handleMessage(messageType int, message []byte, channelId string, userId *string) error {
+func (h *Handler) handleAuthMessage(message string, userId *string) error {
 	if authToken := helper.MatchBearerToken(string(message)); authToken != "" {
 		return authorizeUser(authToken, userId)
 	}
 
-	if *userId == "" {
-		return errors.New("user not authorized")
-	}
+	return errors.New("invalid auth token")
+}
 
-	messageContent, err := h.processMessage(message, channelId, userId)
+func (h *Handler) handleTimeMessage(message string, channelId string) error {
+	time, err := strconv.ParseFloat(message, 8)
 	if err != nil {
 		return err
 	}
 
+	channelObjId, err := primitive.ObjectIDFromHex(channelId)
+	if err != nil {
+		return nil
+	}
+
+	return h.ChangeTime(time, channelObjId)
+}
+func (h *Handler) handleMessage(messageType int, message []byte, channelId string, userId *string) error {
+	type Message struct {
+		Type    string `json:"type"`
+		Content string `json:"content"`
+	}
+
+	var m Message
+	if err := json.Unmarshal(message, &m); err != nil {
+		return err
+	}
+
+	var messageContent []byte
+	var err error
+
+	if *userId == "" && m.Type != MessageTypeAuth {
+		return errors.New("user not authorized")
+	}
+
+	switch m.Type {
+	case MessageTypeAuth:
+		return h.handleAuthMessage(m.Content, userId)
+	case MessageTypeChangeTime:
+		if err = h.handleTimeMessage(m.Content, channelId); err != nil {
+			return err
+		}
+		messageContent = message
+	case MessageTypeText:
+		messageContent, err = h.processMessage(m.Content, channelId, userId)
+		if err != nil {
+			return err
+		}
+	}
+
 	return broadcastMessage(messageType, messageContent, channelId)
+}
+
+func (h *Handler) processMessage(message, channelId string, userId *string) ([]byte, error) {
+	if songId := helper.MatchSongUrl(string(message)); songId != "" {
+		return h.handleSongMessage(songId, channelId, userId)
+	}
+
+	return h.handleTextMessage(message, userId, channelId)
 }
 
 func authorizeUser(authToken string, userId *string) error {
@@ -123,14 +179,6 @@ func authorizeUser(authToken string, userId *string) error {
 	}
 
 	return nil
-}
-
-func (h *Handler) processMessage(message []byte, channelId string, userId *string) ([]byte, error) {
-	if songId := helper.MatchSongUrl(string(message)); songId != "" {
-		return h.handleSongMessage(songId, channelId, userId)
-	}
-
-	return h.handleTextMessage(message, userId, channelId)
 }
 
 func (h *Handler) handleSongMessage(songId, channelId string, userId *string) ([]byte, error) {
@@ -173,10 +221,10 @@ func (h *Handler) handleSongMessage(songId, channelId string, userId *string) ([
 	return json.Marshal(response)
 }
 
-func (h *Handler) handleTextMessage(message []byte, userId *string, channelId string) ([]byte, error) {
+func (h *Handler) handleTextMessage(message string, userId *string, channelId string) ([]byte, error) {
 	messageToSave := models.Message{
 		Author:  *userId,
-		Content: string(message),
+		Content: message,
 		Type:    "message",
 		Id:      primitive.NewObjectID(),
 	}
@@ -642,4 +690,18 @@ func (h *Handler) DeleteChannel(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) ChangeTime(time float64, channelObjId primitive.ObjectID) error {
+	collection := h.Db.Collection("queue")
+
+	filter := bson.M{"channel_id": channelObjId}
+
+	update := bson.M{"$inc": bson.M{"songs.$[].song_start_time": -time * 1000}}
+
+	if _, err := collection.UpdateOne(context.TODO(), filter, update); err != nil {
+		return err
+	}
+
+	return nil
 }
